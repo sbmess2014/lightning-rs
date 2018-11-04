@@ -6,20 +6,17 @@ extern crate lightning;
 mod cli;
 
 // Standard library
-use std::io::prelude::*;
 
 // First party
 use cli::{cli, Command};
 
-
 fn main() {
     if let Err(reason) = run() {
         // if this fails, we literally can't do a thing except panic.
-        write!(std::io::stderr(), "failure: {}", reason).unwrap();
+        eprint!("failure: {}", reason);
         std::process::exit(1);
     }
 }
-
 
 /// Define a `Result`-returning function to run the app.
 ///

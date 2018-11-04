@@ -3,20 +3,18 @@
 //! [Syntect]: https://docs.rs/syntect/1.0.0/syntect/
 
 // Standard library
-use std::default::Default;
 use std::collections::HashMap;
+use std::default::Default;
 use std::str;
 
 // Third party
-use quick_xml::{XmlReader, XmlWriter, Element, Event};
-use syntect::html::highlighted_snippet_for_string;
+use quick_xml::{Element, Event, XmlReader, XmlWriter};
 use syntect::highlighting::Theme;
+use syntect::html::highlighted_snippet_for_string;
 use syntect::parsing::{SyntaxDefinition, SyntaxSet};
-
 
 /// A `Language` is a `String` representing a code highlighting language.
 type Language = String;
-
 
 /// Define XML parsing states of interest for highlighting.
 ///
@@ -34,7 +32,6 @@ enum ParseState {
     /// In a code block; use the content for highlighting.
     InCodeBlock(Language),
 }
-
 
 /// Define XML parsing events of interest for highlighting.
 ///
@@ -54,25 +51,24 @@ enum ParseEvent {
     Other,
 }
 
-
 impl ParseState {
     /// Get the next `ParseState` given current `ParseState` and a `ParseEvent`.
     fn next(self, event: ParseEvent) -> ParseState {
-        use self::ParseState::*;
         use self::ParseEvent::*;
+        use self::ParseState::*;
 
         match (self, event) {
             (NotInBlock, StartPre(Some(language))) => MaybeStartBlock(language),
             (MaybeStartBlock(language), Whitespace) => MaybeStartBlock(language),
             (MaybeStartBlock(language), StartCode) => WillStartCodeBlock(language),
-            (WillStartCodeBlock(language), Text) |
-            (WillStartCodeBlock(language), Whitespace) => InCodeBlock(language),
+            (WillStartCodeBlock(language), Text) | (WillStartCodeBlock(language), Whitespace) => {
+                InCodeBlock(language)
+            }
             (InCodeBlock(_), EndCode) => NotInBlock,
             (_, _) => NotInBlock,
         }
     }
 }
-
 
 impl Default for ParseState {
     fn default() -> ParseState {
@@ -80,54 +76,45 @@ impl Default for ParseState {
     }
 }
 
-
 impl<'e> From<&'e Event> for ParseEvent {
     fn from(event: &'e Event) -> ParseEvent {
-        // TODO @1.15: remove `'static`.
-        const PRE: &'static [u8] = b"pre";
-        const CODE: &'static [u8] = b"code";
-        const CLASS: &'static [u8] = b"class";
-        const WHITE_SPACE: &'static [u8] = b"";
+        const PRE: &[u8] = b"pre";
+        const CODE: &[u8] = b"code";
+        const CLASS: &[u8] = b"class";
+        const WHITE_SPACE: &[u8] = b"";
 
         match *event {
-            Event::Start(ref element) => {
-                match element.name() {
-                    PRE => {
-                        let maybe_class_attr = element.attributes()
-                            .map(|attr| attr.unwrap())
-                            .filter(|&(attr, _value)| attr == CLASS)
-                            .next();
+            Event::Start(ref element) => match element.name() {
+                PRE => {
+                    let maybe_class_attr = element
+                        .attributes()
+                        .map(|attr| attr.unwrap())
+                        .find(|&(attr, _value)| attr == CLASS);
 
-                        if let Some((_attr, value)) = maybe_class_attr {
-                            match str::from_utf8(value) {
-                                Ok(lang) => ParseEvent::StartPre(Some(lang.into())),
-                                Err(_) => ParseEvent::StartPre(None),
-                            }
-                        } else {
-                            ParseEvent::StartPre(None)
+                    if let Some((_attr, value)) = maybe_class_attr {
+                        match str::from_utf8(value) {
+                            Ok(lang) => ParseEvent::StartPre(Some(lang.into())),
+                            Err(_) => ParseEvent::StartPre(None),
                         }
+                    } else {
+                        ParseEvent::StartPre(None)
                     }
-                    CODE => ParseEvent::StartCode,
-                    _ => ParseEvent::Other,
                 }
-            }
-            Event::End(ref element) => {
-                match element.name() {
-                    CODE => ParseEvent::EndCode,
-                    _ => ParseEvent::Other,
-                }
-            }
-            Event::Text(ref element) => {
-                match element.name() {
-                    WHITE_SPACE => ParseEvent::Whitespace,
-                    _ => ParseEvent::Text,
-                }
-            }
+                CODE => ParseEvent::StartCode,
+                _ => ParseEvent::Other,
+            },
+            Event::End(ref element) => match element.name() {
+                CODE => ParseEvent::EndCode,
+                _ => ParseEvent::Other,
+            },
+            Event::Text(ref element) => match element.name() {
+                WHITE_SPACE => ParseEvent::Whitespace,
+                _ => ParseEvent::Text,
+            },
             _ => ParseEvent::Other,
         }
     }
 }
-
 
 /// Highlight all code blocks in a block of HTML.
 ///
@@ -169,12 +156,15 @@ pub fn syntax_highlight(html_string: String, theme: &Theme) -> String {
             if let Ok(unescaped_content) = event.element().unescaped_content() {
                 if let Ok(content_to_highlight) = str::from_utf8(&unescaped_content) {
                     if let Some(valid_syntax) = ss.find_syntax_by_token(&language) {
-                        let syntax_definition = syntax_definitions.entry(language.clone())
+                        let syntax_definition = syntax_definitions
+                            .entry(language.clone())
                             .or_insert(valid_syntax);
 
-                        let highlighted = highlighted_snippet_for_string(content_to_highlight,
-                                                                         syntax_definition,
-                                                                         &theme);
+                        let highlighted = highlighted_snippet_for_string(
+                            content_to_highlight,
+                            syntax_definition,
+                            &theme,
+                        );
                         let text = Element::new(highlighted);
                         assert!(writer.write(Event::Text(text)).is_ok());
                         continue;
@@ -190,46 +180,64 @@ pub fn syntax_highlight(html_string: String, theme: &Theme) -> String {
     String::from_utf8(writer.into_inner()).unwrap_or(html_string)
 }
 
-
 #[cfg(test)]
 mod tests {
 
     #[test]
     fn parse_state() {
-        use super::ParseState;
         use super::ParseEvent;
+        use super::ParseState;
 
         let lang = "rust";
 
-        assert_eq!(ParseState::NotInBlock.next(ParseEvent::StartPre(Some(lang.into()))),
-                   ParseState::MaybeStartBlock(lang.into()));
+        assert_eq!(
+            ParseState::NotInBlock.next(ParseEvent::StartPre(Some(lang.into()))),
+            ParseState::MaybeStartBlock(lang.into())
+        );
 
-        assert_eq!(ParseState::NotInBlock.next(ParseEvent::EndCode),
-                   ParseState::NotInBlock);
+        assert_eq!(
+            ParseState::NotInBlock.next(ParseEvent::EndCode),
+            ParseState::NotInBlock
+        );
 
-        assert_eq!(ParseState::NotInBlock.next(ParseEvent::Other),
-                   ParseState::NotInBlock);
+        assert_eq!(
+            ParseState::NotInBlock.next(ParseEvent::Other),
+            ParseState::NotInBlock
+        );
 
-        assert_eq!(ParseState::NotInBlock.next(ParseEvent::StartCode),
-                   ParseState::NotInBlock);
+        assert_eq!(
+            ParseState::NotInBlock.next(ParseEvent::StartCode),
+            ParseState::NotInBlock
+        );
 
-        assert_eq!(ParseState::MaybeStartBlock(lang.into()).next(ParseEvent::StartCode),
-                   ParseState::WillStartCodeBlock(lang.into()));
+        assert_eq!(
+            ParseState::MaybeStartBlock(lang.into()).next(ParseEvent::StartCode),
+            ParseState::WillStartCodeBlock(lang.into())
+        );
 
-        assert_eq!(ParseState::MaybeStartBlock(lang.into()).next(ParseEvent::Text),
-                   ParseState::NotInBlock);
+        assert_eq!(
+            ParseState::MaybeStartBlock(lang.into()).next(ParseEvent::Text),
+            ParseState::NotInBlock
+        );
 
-        assert_eq!(ParseState::MaybeStartBlock(lang.into()).next(ParseEvent::EndCode),
-                   ParseState::NotInBlock);
+        assert_eq!(
+            ParseState::MaybeStartBlock(lang.into()).next(ParseEvent::EndCode),
+            ParseState::NotInBlock
+        );
 
-        assert_eq!(ParseState::MaybeStartBlock(lang.into())
-                       .next(ParseEvent::StartPre(Some(lang.into()))),
-                   ParseState::NotInBlock);
+        assert_eq!(
+            ParseState::MaybeStartBlock(lang.into()).next(ParseEvent::StartPre(Some(lang.into()))),
+            ParseState::NotInBlock
+        );
 
-        assert_eq!(ParseState::MaybeStartBlock(lang.into()).next(ParseEvent::Other),
-                   ParseState::NotInBlock);
+        assert_eq!(
+            ParseState::MaybeStartBlock(lang.into()).next(ParseEvent::Other),
+            ParseState::NotInBlock
+        );
 
-        assert_eq!(ParseState::WillStartCodeBlock(lang.into()).next(ParseEvent::Text),
-                   ParseState::InCodeBlock(lang.into()));
+        assert_eq!(
+            ParseState::WillStartCodeBlock(lang.into()).next(ParseEvent::Text),
+            ParseState::InCodeBlock(lang.into())
+        );
     }
 }
